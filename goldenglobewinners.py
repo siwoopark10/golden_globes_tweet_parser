@@ -1,19 +1,18 @@
+from argparse import Namespace
 import os
 import re
 import json
 import string
-import nltk
 from nltk.tokenize import sent_tokenize
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag
 from nltk.util import ngrams
+from nltk import ne_chunk
+from nltk.tree import Tree
 from collections import Counter
 from nltk.corpus import stopwords
 import imdb
 from difflib import SequenceMatcher
-
-
-ia = imdb.Cinemagoer()
 
 
 def similar(a, b):
@@ -32,27 +31,9 @@ def read_tweets():
     return tweets
 
 
-
-won_key_words = ["wins", "win", "won","winning"]
-won_key_words_2 = ["goes to", "went to"]
-
-
-
-stop = {'golden', 'globes', 'goldenglobes'}
-possible_award_name_words = {'in', 'a', 'for', 'or'}
-stop.update(list(string.punctuation))
-stop.update(possible_award_name_words)
-print(stop)
-
-
-# types of tag awards names are a part of
-award_words = ['JJS', 'NNP', 'NN', 'VBG', 'VBD', 'JJ', 'VBD']
-
-frequencies_winner = Counter([])
-frequencies_award = Counter([])
-possible_combos = Counter([])
-
+visited = set()
 def personOrMovie(name):
+    # print(name)
     people = ia.search_person(name)
     movies = ia.search_movie(name)
 
@@ -74,33 +55,147 @@ def personOrMovie(name):
     else:
         return False
 
+def personName(name):
+    print(name)
+    people = ia.search_person(name)
+
+    person = people[0] if people else False
+
+    match = similar(person['name'].lower(), name) if person else 0.0
+
+    if match > 0.9:
+        return person['name']
+    else:
+        return False
+
 
 def analyze_tweets():
-    for i,tweet in enumerate(tweets):
+    for i,tweet in enumerate(tweets[15000:]):
         if i % 5000 == 0:
             print(i)
+            print(possible_presenter_combos)
             print(possible_combos)
         sentences = sent_tokenize(tweet)
 
         for sentence in sentences:
-            sentence = sentence.lower()
-            x = re.split("rt @.*: ", sentence)
+            # sentence = sentence.lower()
+            x = re.split("RT @.*: ", sentence)
             if len(x) > 1:
                 sentence = x[1]
             x = re.split("http.*", sentence)
             if len(x) > 1:
                 sentence = ' '.join(x)
 
+            # presenters
+            original_sentence = sentence[:]
+            sentence = sentence.lower()
+            for present in present_key_words:
+                if present in sentence and 'best' in sentence:
+                    # print(sentence)
+                    index_present = sentence.index(present)
+                    words_token = pos_tag(word_tokenize(original_sentence[:index_present]))
+
+                    words = []
+                    for w in words_token:
+                        if w[1] == 'NNP' or w[1] == 'NN':
+                            if not w[0] in stop:
+                                words.append(w[0].lower())
+
+
+                    bigrams = ngrams(words,2)
+                    possible_names = Counter([])
+                    name = ''
+                    
+                    # frequencies_winner += Counter(bigrams)
+                    for bg in bigrams:
+                        temp = ' '.join(bg)
+                        possible_name = personName(temp)
+                        if possible_name:
+                            possible_names[possible_name] += 1
+                    if len(possible_names) > 0:
+                        name = tuple(possible_names.keys())
+                        print(name)
+                        index_best = sentence.index("best")
+                        words_token = pos_tag(word_tokenize(sentence[index_best:]))
+
+                        words = []
+                        for w in words_token:
+                            if not w[0] in stop:
+                                if w[1] in award_words:
+                                    words.append(w[0])
+                                else:
+                                    break
+                        if len(words) == 2:
+                            possible_award = (words[0], words[1])
+                            # frequencies_award[possible_award] += 1
+                        elif len(words) >= 2:
+                            possible_award = (words[0], words[1])
+                            for i in range(2, min(5,len(words))):
+                                possible_award += (words[i],)
+                                # frequencies_award[possible_award] += 1
+                                possible_presenter_combos[(name, ' '.join(possible_award))] += 1
+                                print((name, ' '.join(possible_award)))
+            
+            # reverse presenter award order
+            for present in present_key_words_2:
+                if present in sentence and 'best' in sentence:
+                    index_won = sentence.index(present)
+                    words_token = pos_tag(word_tokenize(original_sentence[index_won+len(present):]))
+                    words = []
+                    for w in words_token:
+                        if w[1] == 'NNP' or w[1] == 'NN':
+                            if not w[0] in stop:
+                                words.append(w[0].lower())
+
+                    bigrams = ngrams(words,2)
+                    possible_names = Counter([])
+                    name = ''
+                    
+                    # frequencies_winner += Counter(bigrams)
+                    for bg in bigrams:
+                        temp = ' '.join(bg)
+                        possible_name = personName(temp)
+                        if possible_name:
+                            possible_names[possible_name] += 1
+                    if len(possible_names) > 0:
+                        name = possible_names.keys()
+                        # print(name)
+                        index_best = sentence.index("best")
+                        # if index_best > index_won:
+                        #     print("order messed up")
+                        #     print(sentence)
+                        #     break
+                        words_token = pos_tag(word_tokenize(sentence[index_best:index_won]))
+
+                        words = []
+                        for w in words_token:
+                            if not w[0] in stop:
+                                if w[1] in award_words:
+                                    words.append(w[0])
+                                else:
+                                    break
+                        if len(words) == 2:
+                            possible_award = (words[0], words[1])
+                            # frequencies_award[possible_award] += 1
+                        elif len(words) >= 2:
+                            possible_award = (words[0], words[1])
+                            for i in range(2, min(5,len(words))):
+                                possible_award += (words[i],)
+                                # frequencies_award[possible_award] += 1
+                                possible_presenter_combos[(name, ' '.join(possible_award))] += 1
+                                print((name, ' '.join(possible_award)))
+
+
             # if any win word is in the sentence
             for won in won_key_words:
                 if won in sentence and 'best' in sentence:
                     index_won = sentence.index(won)
-                    words_token = word_tokenize(sentence[:index_won])
+                    words_token = pos_tag(word_tokenize(original_sentence[:index_won]))
                     words = []
                     for w in words_token:
-                        # if w[1] == 'NNP':
-                        if not w in stop:
-                            words.append(w)
+                        if w[1] == 'NNP' or w[1] == 'NN':
+                            if not w[0] in stop:
+                                words.append(w[0].lower())
 
                     bigrams = ngrams(words,2)
                     possible_names = Counter([])
@@ -127,7 +222,7 @@ def analyze_tweets():
                                     break
                         if len(words) == 2:
                             possible_award = (words[0], words[1])
-                            frequencies_award[possible_award] += 1
+                            # frequencies_award[possible_award] += 1
                         elif len(words) >= 2:
                             possible_award = (words[0], words[1])
                             for i in range(2, min(5,len(words))):
@@ -140,12 +235,12 @@ def analyze_tweets():
             for won in won_key_words_2:
                 if won in sentence and 'best' in sentence:
                     index_won = sentence.index(won)
-                    words_token = word_tokenize(sentence[index_won+len(won):])
+                    words_token = pos_tag(word_tokenize(original_sentence[index_won+len(won):]))
                     words = []
                     for w in words_token:
-                        # if w[1] == 'NNP':
-                        if not w in stop:
-                            words.append(w)
+                        if w[1] == 'NNP' or w[1] == 'NN':
+                            if not w[0] in stop:
+                                words.append(w[0].lower())
 
                     bigrams = ngrams(words,2)
                     possible_names = Counter([])
@@ -162,8 +257,8 @@ def analyze_tweets():
                     
                         index_best = sentence.index("best")
                         if index_best > index_won:
-                            print("order messed up")
-                            print(sentence)
+                            # print("order messed up")
+                            # print(sentence)
                             break
                         words_token = pos_tag(word_tokenize(sentence[index_best:index_won]))
 
@@ -176,7 +271,7 @@ def analyze_tweets():
                                     break
                         if len(words) == 2:
                             possible_award = (words[0], words[1])
-                            frequencies_award[possible_award] += 1
+                            # frequencies_award[possible_award] += 1
                         elif len(words) >= 2:
                             possible_award = (words[0], words[1])
                             for i in range(2, min(5,len(words))):
@@ -184,8 +279,32 @@ def analyze_tweets():
                                 # frequencies_award[possible_award] += 1
                                 possible_combos[(name, ' '.join(possible_award))] += 1
                                 # print((name, ' '.join(possible_award)))
-    print(possible_combos)
+
                                 
+
+ia = imdb.Cinemagoer()
+
+
+won_key_words = ["wins", "win", "won","winning"]
+won_key_words_2 = ["goes to", "went to"]
+
+stop = {'golden', 'globes', 'goldenglobes', 'and'}
+possible_award_name_words = {'in', 'a', 'for', 'or'}
+stop.update(list(string.punctuation))
+stop.update(possible_award_name_words)
+print(stop)
+
+
+# types of tag awards names are a part of
+award_words = ['JJS', 'NNP', 'NN', 'VBG', 'VBD', 'JJ', 'VBD']
+
+# frequencies_winner = Counter([])
+# frequencies_award = Counter([])
+possible_combos = Counter([])
+possible_presenter_combos = Counter([])
+
+present_key_words = ["present", "presents", "presenting"]
+present_key_words_2 = ["presented by"]
 
 tweets = read_tweets()
 analyze_tweets()
